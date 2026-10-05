@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>密码破译系统</title>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/tables.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Courier New', 'SimHei', monospace;
+    background: #0a0a0a;
+    color: #00ff41;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  /* CRT scanline effect */
+  body::after {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,255,65,0.03) 2px,
+      rgba(0,255,65,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 28px;
+    margin: 20px 0;
+    text-shadow: 0 0 10px #00ff41, 0 0 20px #00ff41;
+    letter-spacing: 4px;
+  }
+  .subtitle {
+    text-align: center;
+    color: #00aa2a;
+    font-size: 13px;
+    margin-bottom: 30px;
+  }
+  /* Connection status */
+  .status-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 4px;
+    margin-bottom: 16px;
+    font-size: 13px;
+  }
+  .status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    background: #ff3333;
+  }
+  .status-dot.connected { background: #00ff41; box-shadow: 0 0 6px #00ff41; }
+  /* User name */
+  .user-section {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .user-section label { color: #00aa2a; font-size: 14px; white-space: nowrap; }
+  .user-section input {
+    flex: 1;
+    background: #111;
+    border: 1px solid #333;
+    color: #00ff41;
+    padding: 8px 12px;
+    font-family: inherit;
+    font-size: 14px;
+    border-radius: 4px;
+    outline: none;
+  }
+  .user-section input:focus { border-color: #00ff41; }
+  /* Panels */
+  .panel {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .panel-title {
+    color: #00aa2a;
+    font-size: 14px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid #222;
+    padding-bottom: 8px;
+  }
+  /* Random message */
+  .message-box {
+    background: #0a1a0a;
+    border: 1px dashed #00aa2a;
+    border-radius: 4px;
+    padding: 16px;
+    margin-bottom: 16px;
+    min-height: 60px;
+    line-height: 1.8;
+    font-size: 15px;
+    color: #66ff88;
+    display: none;
+  }
+  .message-box.visible { display: block; }
+  /* Input area */
+  .input-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .input-row input {
+    flex: 1;
+    background: #0a0a0a;
+    border: 1px solid #333;
+    color: #00ff41;
+    padding: 12px 16px;
+    font-family: inherit;
+    font-size: 18px;
+    border-radius: 4px;
+    outline: none;
+    letter-spacing: 2px;
+  }
+  .input-row input:focus { border-color: #00ff41; box-shadow: 0 0 8px rgba(0,255,65,0.3); }
+  .input-row input::placeholder { color: #335533; }
+  .btn {
+    background: #1a3a1a;
+    border: 1px solid #00ff41;
+    color: #00ff41;
+    padding: 12px 24px;
+    font-family: inherit;
+    font-size: 15px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .btn:hover { background: #00ff41; color: #0a0a0a; }
+  .btn:active { transform: scale(0.97); }
+  .btn-small {
+    padding: 8px 16px;
+    font-size: 13px;
+  }
+  .btn-danger {
+    border-color: #ff4444;
+    color: #ff4444;
+    background: #1a0a0a;
+  }
+  .btn-danger:hover { background: #ff4444; color: #0a0a0a; }
+  /* Current line display */
+  .current-line {
+    background: #0a1a0a;
+    border: 1px solid #1a3a1a;
+    border-radius: 4px;
+    padding: 16px;
+    margin-bottom: 16px;
+    min-height: 50px;
+    font-size: 22px;
+    letter-spacing: 3px;
+    line-height: 1.6;
+    word-break: break-all;
+  }
+  .current-line .char {
+    display: inline;
+    animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .cursor-blink {
+    display: inline-block;
+    width: 12px;
+    height: 22px;
+    background: #00ff41;
+    animation: blink 1s infinite;
+    vertical-align: middle;
+    margin-left: 2px;
+  }
+  @keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
+  /* History log */
+  .history-log {
+    max-height: 400px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #333 #111;
+  }
+  .history-log::-webkit-scrollbar { width: 6px; }
+  .history-log::-webkit-scrollbar-track { background: #111; }
+  .history-log::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  .log-entry {
+    padding: 8px 12px;
+    border-bottom: 1px solid #1a1a1a;
+    font-size: 13px;
+    animation: slideIn 0.3s ease;
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-10px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  .log-entry .log-user { color: #ffaa00; font-weight: bold; }
+  .log-entry .log-code { color: #666; margin: 0 8px; }
+  .log-entry .log-result { color: #00ff41; }
+  .log-entry .log-time { color: #444; float: right; font-size: 11px; }
+  .log-entry.log-separator {
+    text-align: center;
+    color: #555;
+    border-bottom: 1px dashed #333;
+    font-style: italic;
+  }
+  /* Help section */
+  .help-toggle {
+    color: #555;
+    font-size: 12px;
+    cursor: pointer;
+    text-align: center;
+    margin: 10px 0;
+  }
+  .help-toggle:hover { color: #00aa2a; }
+  .help-content {
+    display: none;
+    background: #0a0a0a;
+    border: 1px solid #222;
+    border-radius: 4px;
+    padding: 16px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    line-height: 2;
+    color: #888;
+  }
+  .help-content.visible { display: block; }
+  .help-content code {
+    background: #1a1a1a;
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: #00ff41;
+  }
+  /* Error flash */
+  .error-flash {
+    color: #ff4444;
+    font-size: 13px;
+    margin: 6px 0;
+    min-height: 20px;
+  }
+  /* Disclaimer modal */
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.9);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.hidden { display: none; }
+  .modal-box {
+    background: #111;
+    border: 2px solid #00ff41;
+    border-radius: 8px;
+    padding: 30px;
+    max-width: 560px;
+    width: 90%;
+    text-align: center;
+  }
+  .modal-box h2 {
+    color: #00ff41;
+    margin-bottom: 16px;
+    text-shadow: 0 0 8px #00ff41;
+  }
+  .modal-box p {
+    color: #aaa;
+    font-size: 14px;
+    line-height: 1.8;
+    margin-bottom: 20px;
+  }
+  .modal-buttons {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+  }
+  .modal-buttons .btn { min-width: 100px; }
+  /* Responsive */
+  @media (max-width: 600px) {
+    .container { padding: 10px; }
+    h1 { font-size: 20px; }
+    .input-row input { font-size: 16px; }
+    .current-line { font-size: 18px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Disclaimer Modal -->
+<div class="modal-overlay" id="disclaimerModal">
+  <div class="modal-box">
+    <h2>&#9888; 免责声明</h2>
+    <p>
+      每天的随机留言是有一定概率重复的！因为无法避免，请你原谅我。<br><br>
+      免责声明：每天的随机留言需要一个单独的不被打扰的空间来被查看，否则可能会有严重后果！
+      请把此程序严密隐藏，将承载此程序的设备设置密码以保密，否则后果自负。
+    </p>
+    <p>是否需要查看今天的随机留言？</p>
+    <div class="modal-buttons">
+      <button class="btn" onclick="handleDisclaimer(true)">yes</button>
+      <button class="btn btn-danger" onclick="handleDisclaimer(false)">no</button>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <h1>&#128272; 密码破译系统</h1>
+  <p class="subtitle">输入编号代码，破译隐藏信息 &mdash; 所有用户共享破译结果</p>
+
+  <!-- Status bar -->
+  <div class="status-bar">
+    <div>
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">连接中...</span>
+    </div>
+    <span id="onlineCount">在线: -</span>
+  </div>
+
+  <!-- User name -->
+  <div class="user-section">
+    <label>&#128100; 昵称:</label>
+    <input type="text" id="userName" placeholder="输入你的昵称" maxlength="20">
+  </div>
+
+  <!-- Random message -->
+  <div class="message-box" id="messageBox"></div>
+
+  <!-- Current decoding line -->
+  <div class="panel">
+    <div class="panel-title">&#9654; 当前破译行</div>
+    <div class="current-line" id="currentLine">
+      <span class="cursor-blink"></span>
+    </div>
+    <div class="error-flash" id="errorFlash"></div>
+    <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;">
+      <div class="input-row" style="flex:1;min-width:200px;">
+        <input type="text" id="codeInput" placeholder="输入编号代码，如 a1 b3 c5" autocomplete="off">
+        <button class="btn" onclick="submitCode()" id="submitBtn">破译</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
+      <button class="btn btn-small" onclick="newLine()">&#8629; 换行</button>
+      <button class="btn btn-small" onclick="undoLast()">&#8634; 撤回</button>
+      <button class="btn btn-small btn-danger" onclick="clearCurrent()">&#10005; 清空当前行</button>
+    </div>
+  </div>
+
+  <!-- Help -->
+  <div class="help-toggle" onclick="toggleHelp()">&#9660; 使用说明</div>
+  <div class="help-content" id="helpContent">
+    <strong style="color:#00ff41;">使用方法：</strong><br>
+    1. 输入格式为 <code>字母+数字</code>，例如 <code>a1</code>、<code>b23</code>、<code>c5</code><br>
+    2. 字母范围 <code>a-z</code>（不含 u、v），每个字母对应一组汉字<br>
+    3. 数字为该组中的序号（从1开始）<br>
+    4. 每次只能输入一个编号，按回车或点击"破译"按钮提交<br>
+    5. 输入 <code>ok</code> 结束当前会话<br>
+    6. 所有用户的破译结果实时共享，任何人都能看到<br><br>
+    <strong style="color:#00ff41;">字母对照表：</strong><br>
+    a=啊阿腌哎... | b=八巴叭扒... | c=擦猜才材... | d=大打答搭...<br>
+    e=呃阿婀俄... | f=发伐乏罚... | g=嘎尬该改... | h=哈嗨孩海...<br>
+    i=一乙壹伊... | j=鸡机几击... | k=咖喀卡开... | l=拉啦垃喇...<br>
+    m=妈麻吗玛... | n=拿那哪娜... | o=哦喔噢欧... | p=趴啪爬怕...<br>
+    q=七沏妻凄... | r=然燃冉苒... | s=撒洒卅飒... | t=他她它塌...<br>
+    w=哇娃挖洼... | x=吸希昔析... | y=丫压押鸦... | z=匝杂砸灾...
+  </div>
+
+  <!-- Shared history -->
+  <div class="panel">
+    <div class="panel-title">&#128220; 全局破译记录（所有用户共享）</div>
+    <div class="history-log" id="historyLog"></div>
+  </div>
+</div>
+
+<script>
+// ---- Cipher logic ----
+// CIPHER_TABLES loaded from tables.js
+
+function decodeCode(code) {
+  code = code.trim().toLowerCase();
+  if (code.length < 2) return null;
+
+  const letter = code[0];
+  const numStr = code.substring(1);
+  const num = parseInt(numStr, 10);
+
+  if (!/[a-z]/.test(letter) || letter === 'u' || letter === 'v') return null;
+  if (isNaN(num) || num < 1) return null;
+
+  const table = CIPHER_TABLES[letter];
+  if (!table) return null;
+
+  // Each Chinese character is one element in the array
+  const index = num - 1;
+  if (index >= table.length) return null;
+
+  return table[index];
+}
+
+// ---- Random messages (from sc1-sc6 in original code) ----
+const RANDOM_MESSAGES = [
+  "今天好些了吗？没有你总感觉少些什么，早些回来，我想你了",
+  "滴！想你卡~放心吧！今天我有好好学习哦，",
+  "'咚咚咚'今日份心灵之赛博陪伴已送达，请注意查收哦！\n快去解锁今天的留言吧！",
+  "Hello! You are my favorite girl!",
+  "你有好好照顾自己嘛？不要睡太晚、别太累了，很难受吧？好好休息！",
+  "今日份关怀已送达！你的赛博伴侣每天都在线哦！"
+];
+
+// ---- Socket.io ----
+let socket;
+let currentLineChars = [];
+let connected = false;
+
+function initSocket() {
+  socket = io();
+
+  socket.on('connect', () => {
+    connected = true;
+    document.getElementById('statusDot').classList.add('connected');
+    document.getElementById('statusText').textContent = '已连接';
+  });
+
+  socket.on('disconnect', () => {
+    connected = false;
+    document.getElementById('statusDot').classList.remove('connected');
+    document.getElementById('statusText').textContent = '已断开';
+  });
+
+  // Receive existing results on connect
+  socket.on('init', (results) => {
+    const log = document.getElementById('historyLog');
+    log.innerHTML = '';
+    for (const entry of results) {
+      appendLogEntry(entry, false);
+    }
+    scrollLogToBottom();
+  });
+
+  // Receive new results in real-time
+  socket.on('newResult', (entry) => {
+    appendLogEntry(entry, true);
+    scrollLogToBottom();
+  });
+}
+
+function getUserName() {
+  const name = document.getElementById('userName').value.trim();
+  return name || '匿名用户';
+}
+
+// ---- Disclaimer ----
+function handleDisclaimer(wantMessage) {
+  const modal = document.getElementById('disclaimerModal');
+  modal.classList.add('hidden');
+
+  if (wantMessage) {
+    const idx = Math.floor(Math.random() * RANDOM_MESSAGES.length);
+    const box = document.getElementById('messageBox');
+    box.textContent = RANDOM_MESSAGES[idx];
+    box.classList.add('visible');
+  }
+
+  document.getElementById('codeInput').focus();
+}
+
+// ---- Core actions ----
+function submitCode() {
+  const input = document.getElementById('codeInput');
+  const code = input.value.trim();
+  const errorEl = document.getElementById('errorFlash');
+
+  if (!code) return;
+
+  // Check for "ok" (end session)
+  if (code.toLowerCase() === 'ok') {
+    input.value = '';
+    errorEl.textContent = '';
+    showTempError('会话已结束。');
+    return;
+  }
+
+  const result = decodeCode(code);
+  if (result === null) {
+    showTempError('无效编号！格式：字母(a-z,非u/v)+数字，如 a1、b23');
+    input.value = '';
+    return;
+  }
+
+  // Add to current line
+  currentLineChars.push({ code, char: result });
+  renderCurrentLine();
+
+  // Broadcast to all users
+  if (connected) {
+    socket.emit('decode', {
+      user: getUserName(),
+      code: code,
+      result: result
+    });
+  }
+
+  input.value = '';
+  input.focus();
+  errorEl.textContent = '';
+}
+
+function newLine() {
+  if (currentLineChars.length === 0) return;
+
+  // Build the full line text
+  const fullText = currentLineChars.map(c => c.char).join('');
+
+  // Send as a complete line to history
+  if (connected) {
+    socket.emit('decode', {
+      user: getUserName(),
+      code: '[LINE]',
+      result: '━━━ ' + fullText + ' ━━━'
+    });
+  }
+
+  currentLineChars = [];
+  renderCurrentLine();
+}
+
+function undoLast() {
+  if (currentLineChars.length === 0) return;
+  currentLineChars.pop();
+  renderCurrentLine();
+}
+
+function clearCurrent() {
+  if (currentLineChars.length === 0) return;
+  currentLineChars = [];
+  renderCurrentLine();
+
+  if (connected) {
+    socket.emit('clearLine', { user: getUserName() });
+  }
+}
+
+// ---- Rendering ----
+function renderCurrentLine() {
+  const el = document.getElementById('currentLine');
+  let html = '';
+  for (const item of currentLineChars) {
+    html += '<span class="char" title="' + item.code + '">' + item.char + '</span>';
+  }
+  html += '<span class="cursor-blink"></span>';
+  el.innerHTML = html;
+}
+
+function appendLogEntry(entry, animate) {
+  const log = document.getElementById('historyLog');
+  const div = document.createElement('div');
+  div.className = 'log-entry' + (entry.code === '[CLEAR]' ? ' log-separator' : '');
+
+  const time = new Date(entry.timestamp);
+  const timeStr = time.getHours().toString().padStart(2,'0') + ':' +
+                  time.getMinutes().toString().padStart(2,'0') + ':' +
+                  time.getSeconds().toString().padStart(2,'0');
+
+  if (entry.code === '[CLEAR]') {
+    div.innerHTML = '<span class="log-user">' + escapeHtml(entry.user) + '</span> ' +
+                    escapeHtml(entry.result) +
+                    ' <span class="log-time">' + timeStr + '</span>';
+  } else {
+    div.innerHTML = '<span class="log-user">' + escapeHtml(entry.user) + '</span>' +
+                    '<span class="log-code">[' + escapeHtml(entry.code) + ']</span>' +
+                    '<span class="log-result">' + escapeHtml(entry.result) + '</span>' +
+                    '<span class="log-time">' + timeStr + '</span>';
+  }
+
+  if (!animate) div.style.animation = 'none';
+  log.appendChild(div);
+}
+
+function scrollLogToBottom() {
+  const log = document.getElementById('historyLog');
+  log.scrollTop = log.scrollHeight;
+}
+
+function showTempError(msg) {
+  const el = document.getElementById('errorFlash');
+  el.textContent = msg;
+  setTimeout(() => { el.textContent = ''; }, 3000);
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function toggleHelp() {
+  document.getElementById('helpContent').classList.toggle('visible');
+}
+
+// ---- Keyboard shortcut ----
+document.addEventListener('DOMContentLoaded', () => {
+  initSocket();
+
+  const input = document.getElementById('codeInput');
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitCode();
+    }
+  });
+
+  // Restore username from localStorage
+  const saved = localStorage.getItem('cipher_username');
+  if (saved) document.getElementById('userName').value = saved;
+
+  document.getElementById('userName').addEventListener('input', () => {
+    localStorage.setItem('cipher_username', document.getElementById('userName').value);
+  });
+});
+</script>
+</body>
+</html>

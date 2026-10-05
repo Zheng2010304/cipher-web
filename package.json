@@ -1,0 +1,15 @@
+{
+  "name": "cipher-web",
+  "version": "1.0.0",
+  "description": "密码破译网页应用",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "node build.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "localtunnel": "^2.0.2",
+    "socket.io": "^4.8.0"
+  }
+}
